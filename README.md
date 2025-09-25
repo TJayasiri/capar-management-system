@@ -1,1 +1,0 @@
-# capar-management-system
