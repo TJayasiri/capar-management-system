@@ -4,6 +4,7 @@ Import all models here for easy access
 """
 
 from .company import Company
+#from .companies import get_current_user_company 
 from .user import User, UserRole
 from .category import Category
 from .suggested_action import SuggestedAction

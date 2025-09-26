@@ -12,7 +12,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 
 from ..database import get_db
-from ..models import User, UserRole
+from ..models.capar import User
 from ..config import settings
 
 router = APIRouter()
@@ -25,28 +25,23 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 # Pydantic schemas
 class UserCreate(BaseModel):
-    email: str  # Changed from EmailStr to str
+    username: str
+    email: str
     password: str
-    full_name: str
-    role: UserRole = UserRole.FACTORY_USER
 
 class UserLogin(BaseModel):
-    email: str  # Changed from EmailStr to str
+    email: str
     password: str
 
 class UserResponse(BaseModel):
-    id: str
+    id: int  # Changed from UUID to int
+    username: str
     email: str
-    full_name: str
-    role: UserRole
     is_active: bool
     created_at: datetime
     
     class Config:
         from_attributes = True
-        json_encoders = {
-            UUID: str  # Convert UUID to string
-        }
 
 class Token(BaseModel):
     access_token: str
@@ -124,33 +119,25 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     # Create new user
     hashed_password = get_password_hash(user_data.password)
     db_user = User(
+        username=user_data.username,
         email=user_data.email,
         hashed_password=hashed_password,
-        full_name=user_data.full_name,
-        role=user_data.role
+        is_active=True
     )
     
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
     
-    # Convert UUID to string for response
-    response_data = {
-        "id": str(db_user.id),
-        "email": db_user.email,
-        "full_name": db_user.full_name,
-        "role": db_user.role,
-        "is_active": db_user.is_active,
-        "created_at": db_user.created_at
-    }
-    
-    return response_data
+    return db_user
+
 
 @router.post("/login", response_model=Token)
 async def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """Login user and return access token"""
     
-    user = authenticate_user(db, form_data.username, form_data.password)
+    # Use email instead of username
+    user = authenticate_user(db, form_data.username, form_data.password)  # form_data.username will be the email
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -159,36 +146,48 @@ async def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Sessi
         )
     
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
-        )
+        raise HTTPException(status_code=400, detail="Inactive user")
     
-    # Update last login
-    user.last_login = datetime.utcnow()
-    db.commit()
-    
-    # Create access token
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
     
-    # Convert user data with UUID to string
-    user_data = {
-        "id": str(user.id),
-        "email": user.email,
-        "full_name": user.full_name,
-        "role": user.role,
-        "is_active": user.is_active,
-        "created_at": user.created_at
-    }
-    
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user_data
+        "user": user
     }
+
+# @router.post("/login", response_model=Token)
+# async def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+#     """Login user and return access token"""
+#     
+#     user = authenticate_user(db, form_data.username, form_data.password)
+#     if not user:
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED,
+#             detail="Incorrect email or password",
+#             headers={"WWW-Authenticate": "Bearer"},
+#         )
+#     
+#     if not user.is_active:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="Inactive user"
+#         )
+#     
+#     # Create access token
+#     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+#     access_token = create_access_token(
+#         data={"sub": user.email}, expires_delta=access_token_expires
+#     )
+#     
+#     return {
+#         "access_token": access_token,
+#         "token_type": "bearer",
+#         "user": user
+#     }
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
